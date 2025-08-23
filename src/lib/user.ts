@@ -1,6 +1,6 @@
 /**
  * 用户管理工具函数
- * 处理临时用户ID的生成和存储
+ * 处理用户ID的生成和存储，集成认证系统
  */
 
 /**
@@ -21,17 +21,46 @@ function isValidUUID(str: string): boolean {
 
 /**
  * 获取或创建用户ID
- * 如果localStorage中没有用户ID或格式不正确，则创建一个新的UUID格式用户ID
+ * 优先使用认证系统中的用户ID，如果没有则使用localStorage
  */
 export function getUserId(): string {
   const STORAGE_KEY = 'gemini_video_webui_user_id';
   
+  // 首先尝试从认证状态中获取用户ID
+  try {
+    const authStorage = localStorage.getItem('auth-storage');
+    if (authStorage) {
+      const authState = JSON.parse(authStorage);
+      // Zustand persist 的数据结构是 { state: { user, isAuthenticated } }
+      if (authState.state?.user?.id && authState.state?.isAuthenticated) {
+        // 如果用户已登录，同步更新localStorage中的用户ID
+        const authenticatedUserId = authState.state.user.id;
+        localStorage.setItem(STORAGE_KEY, authenticatedUserId);
+        console.log('[DEBUG] 使用认证用户ID:', authenticatedUserId);
+        return authenticatedUserId;
+      }
+      // 也检查直接存储的情况（兼容性）
+      if (authState.user?.id && authState.isAuthenticated) {
+        const authenticatedUserId = authState.user.id;
+        localStorage.setItem(STORAGE_KEY, authenticatedUserId);
+        console.log('[DEBUG] 使用认证用户ID (直接):', authenticatedUserId);
+        return authenticatedUserId;
+      }
+    }
+  } catch (error) {
+    console.warn('无法获取认证状态:', error);
+  }
+  
+  // 如果认证系统中没有用户，使用localStorage中的用户ID
   let userId = localStorage.getItem(STORAGE_KEY);
   
   // 如果没有用户ID或者不是有效的UUID格式，则生成新的
   if (!userId || !isValidUUID(userId)) {
     userId = generateUserId();
     localStorage.setItem(STORAGE_KEY, userId);
+    console.log('[DEBUG] 生成新用户ID:', userId);
+  } else {
+    console.log('[DEBUG] 使用localStorage用户ID:', userId);
   }
   
   return userId;
@@ -50,5 +79,22 @@ export function clearUserId(): void {
  */
 export function hasUserId(): boolean {
   const STORAGE_KEY = 'gemini_video_webui_user_id';
-  return !!localStorage.getItem(STORAGE_KEY);
+  const userId = localStorage.getItem(STORAGE_KEY);
+  return !!userId && isValidUUID(userId);
+}
+
+/**
+ * 检查用户是否已登录（通过认证系统）
+ */
+export function isUserAuthenticated(): boolean {
+  try {
+    const authStorage = localStorage.getItem('auth-storage');
+    if (authStorage) {
+      const authState = JSON.parse(authStorage);
+      return authState.state?.isAuthenticated === true;
+    }
+  } catch (error) {
+    console.warn('无法检查认证状态:', error);
+  }
+  return false;
 }

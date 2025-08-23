@@ -19,6 +19,9 @@ import express, { type Request, type Response, type NextFunction }  from 'expres
 import cors from 'cors';
 import chatRoutes from './routes/chat.js';
 import providersRoutes from './routes/providers.js';
+import authRoutes from './routes/auth.js';
+import dataRoutes from './routes/data.js';
+import businessRoutes from './routes/business.js';
 
 
 const app: express.Application = express();
@@ -32,6 +35,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
  */
 app.use('/api/chat', chatRoutes);
 app.use('/api/providers', providersRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/data', dataRoutes);
+app.use('/api/business', businessRoutes);
 
 /**
  * health
@@ -46,11 +52,25 @@ app.use('/api/health', (_req: Request, res: Response): void => {
 /**
  * error handler middleware
  */
-app.use((_error: Error, _req: Request, res: Response, _next: NextFunction) => {
-  res.status(500).json({
-    success: false,
-    error: 'Server internal error'
+app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[Global Error Handler] 错误详情:', {
+    name: error.name,
+    message: error.message,
+    stack: error.stack
   });
+  
+  // 检查是否是AIServiceError类型的错误
+  if (error.name === 'AIServiceError') {
+    res.status(400).json({
+      success: false,
+      error: error.message || '服务错误'
+    });
+  } else {
+    res.status(500).json({
+      success: false,
+      error: `Server internal error: ${error.message}`
+    });
+  }
 });
 
 /**

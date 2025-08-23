@@ -175,8 +175,8 @@ export class OllamaAdapter implements AIServiceAdapter {
       if (models.length === 0) {
         return [
           { id: 'llama3.2', name: 'Llama 3.2' },
-          { id: 'qwen2.5', name: 'Qwen 2.5' },
-          { id: 'mistral-nemo', name: 'Mistral Nemo' },
+        { id: 'qwen2.5', name: 'Qwen 2.5' },
+        { id: 'mistral-nemo', name: 'Mistral Nemo' },
           { id: 'codellama', name: 'Code Llama' },
           { id: 'codellama:13b', name: 'Code Llama 13B' },
           { id: 'mistral', name: 'Mistral' },

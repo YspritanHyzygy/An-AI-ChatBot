@@ -168,8 +168,7 @@ export default function History() {
       claude: 'Claude',
       gemini: 'Gemini',
       xai: 'xAI',
-      ollama: 'Ollama',
-      qwen: '通义千问'
+      ollama: 'Ollama'
     };
     return provider ? providerNames[provider] || provider : '未知';
   };

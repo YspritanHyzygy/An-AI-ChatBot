@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Save, TestTube, Eye, EyeOff, AlertCircle, Settings as SettingsIcon, ArrowLeft, RefreshCw, Check, X } from 'lucide-react';
+import { Save, TestTube, Eye, EyeOff, AlertCircle, Settings as SettingsIcon, ArrowLeft, RefreshCw, Check, X, User, Lock } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getUserId } from '../lib/user';
+import useAuthStore from '../store/authStore';
+import PasswordStrength from '../components/PasswordStrength';
 
 interface AIProvider {
   id: string;
@@ -43,6 +45,22 @@ export default function Settings() {
   const [saveStatus, setSaveStatus] = useState<Record<string, { status: 'idle' | 'success' | 'error'; timestamp: number }>>({});
   const [customModelSaveStatus, setCustomModelSaveStatus] = useState<{ status: 'idle' | 'success' | 'error'; timestamp: number }>({ status: 'idle', timestamp: 0 });
   
+  // 密码管理状态
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showUserPasswords, setShowUserPasswords] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordValidation, setPasswordValidation] = useState<{
+    isValid: boolean;
+    errors: string[];
+    strength: 'weak' | 'medium' | 'strong';
+  } | null>(null);
+  
+  // 获取用户信息和认证方法
+  const { user, isLoading: authLoading, changePassword } = useAuthStore();
+  
   // 自定义模型管理状态
   const [customModels, setCustomModels] = useState<Array<{
     id: string;
@@ -62,10 +80,47 @@ export default function Settings() {
   const [savingCustomModels, setSavingCustomModels] = useState(false);
 
   useEffect(() => {
-    loadProviders();
-    loadConfigs();
-    loadCustomModels();
+    const loadData = async () => {
+      await loadProviders();
+      await loadConfigs();
+      await loadCustomModels();
+    };
+    loadData();
   }, []);
+
+  // 当configs加载完成后，恢复已保存的模型数据到providers状态
+  useEffect(() => {
+    if (configs.length > 0) {
+      // 对configs进行去重，优先使用模型数量最多的配置
+      const uniqueConfigs = new Map<string, typeof configs[0]>();
+      
+      configs.forEach(config => {
+        if (config.models && config.models.length > 0) {
+          const existingConfig = uniqueConfigs.get(config.provider);
+          // 如果没有现有配置，或者当前配置的模型数量更多，则使用当前配置
+          if (!existingConfig || config.models.length > (existingConfig.models?.length || 0)) {
+            uniqueConfigs.set(config.provider, config);
+          }
+        }
+      });
+      
+      // 使用去重后的配置恢复模型数据
+      uniqueConfigs.forEach((config) => {
+        // 检查是否正在获取模型，如果是则不覆盖
+        if (fetchingModels === config.provider) {
+          return;
+        }
+        
+        // 更新providers状态中的models
+        setProviders(prev => prev.map(p => {
+          if (p.id === config.provider) {
+            return { ...p, models: config.models as (string | { id?: string; name?: string; [key: string]: unknown })[] };
+          }
+          return p;
+        }));
+      });
+    }
+  }, [configs, fetchingModels]);
 
   // 加载自定义模型
   const loadCustomModels = async () => {
@@ -96,6 +151,43 @@ export default function Settings() {
       console.error('Error loading custom models:', error);
     } finally {
       setLoadingCustomModels(false);
+    }
+  };
+
+  // 密码更改处理函数
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (!currentPassword || !newPassword) {
+      setPasswordError('请填写所有密码字段');
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError('两次输入的新密码不一致');
+      return;
+    }
+
+    if (passwordValidation && !passwordValidation.isValid) {
+      setPasswordError('新密码强度不足，请参考密码要求');
+      return;
+    }
+
+    try {
+      const result = await changePassword(currentPassword, newPassword, confirmNewPassword);
+      if (result.success) {
+        setPasswordSuccess(result.message || '密码修改成功');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmNewPassword('');
+        setPasswordValidation(null);
+      } else {
+        setPasswordError(result.error || '密码修改失败');
+      }
+    } catch (error) {
+      setPasswordError('操作失败，请重试');
     }
   };
 
@@ -182,9 +274,73 @@ export default function Settings() {
     }
   };
 
+  // 重置确认状态
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showResetLoading, setShowResetLoading] = useState(false);
+  const [resetStatus, setResetStatus] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; message: string }>({ status: 'idle', message: '' });
+
+  // 重置所有模型到默认状态 - 清除后端数据库中的动态模型
+  const resetAllModelsToDefault = async () => {
+    setShowResetConfirm(true);
+  };
+
+  // 执行重置操作
+  const executeReset = async () => {
+    setShowResetConfirm(false);
+    setShowResetLoading(true);
+    setResetStatus({ status: 'loading', message: '正在重置模型列表...' });
+    
+    try {
+      const userId = getUserId();
+      if (!userId) {
+        setShowResetLoading(false);
+        setResetStatus({ status: 'error', message: '请先登录' });
+        return;
+      }
+      
+      // 调用后端API直接清空JSON文件中的available_models字段
+      const response = await fetch('/api/data/clear-models', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ userId })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setResetStatus({ status: 'success', message: `重置成功！已清除${result.data?.clearedCount || 0}个提供商的动态模型` });
+          
+          // 1.5秒后关闭加载弹窗并刷新页面
+          setTimeout(() => {
+            setShowResetLoading(false);
+            window.location.reload();
+          }, 1500);
+        } else {
+          setShowResetLoading(false);
+          setResetStatus({ status: 'error', message: `重置失败: ${result.error || '未知错误'}` });
+        }
+      } else {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('重置模型失败:', error);
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      setShowResetLoading(false);
+      setResetStatus({ status: 'error', message: `重置失败: ${errorMessage}` });
+    }
+    
+    // 3秒后重置状态
+    setTimeout(() => {
+      setResetStatus({ status: 'idle', message: '' });
+    }, 3000);
+  };
+
+  // 加载AI服务提供商
   const loadProviders = async () => {
     try {
-      type KnownProviderId = 'openai' | 'claude' | 'gemini' | 'xai' | 'ollama' | 'qwen';
+      type KnownProviderId = 'openai' | 'claude' | 'gemini' | 'xai' | 'ollama';
       interface ApiProviderData { id: KnownProviderId; name: string; description?: string; }
       // 从API获取支持的提供商信息
       const response = await fetch('/api/providers/supported');
@@ -288,24 +444,6 @@ export default function Settings() {
                   description: 'Ollama服务器地址'
                 },
 
-              ],
-              qwen: [
-                {
-                  name: 'api_key',
-                  label: 'API Key',
-                  type: 'password' as const,
-                  required: true,
-                  placeholder: 'sk-...',
-                  description: '从阿里云控制台获取您的API密钥'
-                },
-                {
-                  name: 'base_url',
-                  label: 'Base URL',
-                  type: 'url' as const,
-                  required: false,
-                  placeholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-                  description: '可选：自定义API端点'
-                }
               ]
             };
             
@@ -314,8 +452,7 @@ export default function Settings() {
                 claude: ['claude-opus-4-1-20250805', 'claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'claude-3-7-sonnet-20250219', 'claude-3-5-haiku-20241022'],
                 gemini: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
                 xai: ['grok-4', 'grok-3', 'grok-2-1212', 'grok-2-vision-1212'],
-                ollama: ['llama3.3', 'llama3.2', 'qwen2.5', 'mistral-nemo', 'phi4'],
-                qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-coder']
+                ollama: ['llama3.3', 'llama3.2', 'qwen2.5', 'mistral-nemo', 'phi4']
             };
 
             return {
@@ -454,30 +591,6 @@ export default function Settings() {
               }
             ],
             models: ['llama3.3', 'llama3.2', 'qwen2.5', 'mistral-nemo', 'phi4']
-          },
-          {
-            id: 'qwen',
-            name: '阿里云通义千问',
-            description: '通义千问系列模型',
-            fields: [
-              {
-                name: 'api_key',
-                label: 'API Key',
-                type: 'password',
-                required: true,
-                placeholder: 'sk-...',
-                description: '从阿里云控制台获取您的API密钥'
-              },
-              {
-                name: 'base_url',
-                label: 'Base URL',
-                type: 'url',
-                required: false,
-                placeholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-                description: '可选：自定义API端点'
-              }
-            ],
-            models: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-coder']
           }
         ];
         setProviders(fallbackProviders);
@@ -539,16 +652,21 @@ export default function Settings() {
       if (response.ok) {
         const result = await response.json();
         if (result.success && result.data) {
-          const configs: ProviderConfig[] = result.data.map((config: { provider_name: string; api_key?: string; base_url?: string; default_model?: string; available_models?: (string | { id?: string; name?: string; [key: string]: unknown })[] }) => ({
-            provider: config.provider_name,
-            config: {
-              api_key: config.api_key || '',
-              base_url: config.base_url || ''
-            },
-            model: config.default_model || '',
-            is_default: false,
-            models: config.available_models || []
-          }));
+          const configs: ProviderConfig[] = result.data.map((config: any) => {
+            // 过滤出配置字段，排除系统字段
+            const { 
+              id, user_id, provider_name, available_models, default_model, 
+              is_active, created_at, updated_at, ...configFields 
+            } = config;
+            
+            return {
+              provider: config.provider_name,
+              config: configFields, // 包含所有的配置字段（api_key, base_url, use_responses_api等）
+              model: config.default_model || '',
+              is_default: false,
+              models: config.available_models || []
+            };
+          });
           setConfigs(configs);
         } else {
           // 如果没有配置，使用空数组
@@ -630,8 +748,7 @@ export default function Settings() {
         };
         localStorage.setItem('selectedModel', JSON.stringify(selectedModelData));
         
-        // 触发自定义事件，通知其他组件localStorage已更新
-        window.dispatchEvent(new Event('localStorageChanged'));
+        // 不在这里触发事件，由saveConfig统一处理
         
         return updated;
       }
@@ -647,8 +764,7 @@ export default function Settings() {
       'claude': 'Anthropic Claude',
       'gemini': 'Google Gemini',
       'xai': 'xAI Grok',
-      'ollama': 'Ollama',
-      'qwen': 'Qwen'
+      'ollama': 'Ollama'
     };
     return providerNames[providerId] || providerId.charAt(0).toUpperCase() + providerId.slice(1);
   };
@@ -668,8 +784,8 @@ export default function Settings() {
         throw new Error('配置不存在');
       }
 
-      // 验证必填字段
-      if (!config.config.api_key) {
+      // 验证必填字段（Ollama不需要API Key）
+      if (providerId !== 'ollama' && !config.config.api_key) {
         throw new Error('API Key 是必填项');
       }
 
@@ -685,7 +801,9 @@ export default function Settings() {
           apiKey: config.config.api_key,
           baseUrl: config.config.base_url,
           availableModels: config.models || modelFetchResults[providerId]?.models || [],
-          defaultModel: config.model
+          defaultModel: config.model,
+          // 包含所有额外的配置字段
+          extraConfig: config.config
         })
       });
 
@@ -703,7 +821,7 @@ export default function Settings() {
       };
       localStorage.setItem('selectedModel', JSON.stringify(selectedModelData));
       
-      // 触发自定义事件，通知其他组件localStorage已更新
+      // 只在配置保存成功后触发事件，通知ModelSelector更新
       window.dispatchEvent(new Event('localStorageChanged'));
       
       // 设置保存成功状态
@@ -757,8 +875,8 @@ export default function Settings() {
         return;
       }
 
-      // 验证必填字段
-      if (!config.config.api_key) {
+      // 验证必填字段（Ollama不需要API Key）
+      if (providerId !== 'ollama' && !config.config.api_key) {
         setTestResults(prev => ({
           ...prev,
           [providerId]: {
@@ -816,13 +934,13 @@ export default function Settings() {
     try {
       setFetchingModels(providerId);
       const config = getProviderConfig(providerId);
-      if (!config || !config.config.api_key) {
+      if (!config || (providerId !== 'ollama' && !config.config.api_key)) {
         setModelFetchResults(prev => ({
           ...prev,
           [providerId]: {
             success: false,
             models: [],
-            message: '请先配置API密钥'
+            message: providerId === 'ollama' ? '请先配置服务器地址' : '请先配置API密钥'
           }
         }));
         return;
@@ -842,42 +960,80 @@ export default function Settings() {
 
       const result = await response.json();
       
-      if (result.success) {
+      // 修复：处理后端返回的结构化响应（包括成功和失败的情况）
+      if (result.success && result.data && result.data.models && result.data.models.length > 0) {
+        const fetchedModels = result.data.models;
+        
         setModelFetchResults(prev => ({
           ...prev,
           [providerId]: {
             success: true,
-            models: result.data.models,
-            message: `成功获取 ${result.data.models.length} 个模型`
+            models: fetchedModels,
+            message: `成功获取 ${fetchedModels.length} 个模型`
           }
         }));
         
-        // 更新provider的models配置
-        const provider = providers.find(p => p.id === providerId);
-        if (provider) {
-          provider.models = result.data.models;
-        }
-        
         // 更新配置中的可用模型列表
-        updateConfig(providerId, 'available_models', result.data.models);
+        updateConfig(providerId, 'models', fetchedModels);
         
-        // 自动保存配置到数据库
-        if (config) {
-          await saveConfig(providerId);
-          // 重新加载配置以确保同步
-          await loadConfigs();
-        }
+        // 更新providers状态中的models
+        setProviders(prev => {
+          const updated = prev.map(p => 
+            p.id === providerId 
+              ? { ...p, models: fetchedModels }
+              : p
+          );
+          return updated;
+        });
+        
+        // 3. 延迟保存配置，确保状态更新完成
+        setTimeout(async () => {
+          try {
+            const updatedConfig = getProviderConfig(providerId);
+            if (updatedConfig) {
+              const userId = getUserId();
+              const response = await fetch('/api/providers/config', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  userId,
+                  providerName: providerId,
+                  apiKey: updatedConfig.config.api_key,
+                  baseUrl: updatedConfig.config.base_url,
+                  availableModels: fetchedModels,
+                  defaultModel: updatedConfig.model
+                })
+              });
+              
+              if (response.ok) {
+                // 触发模型列表更新事件，通知ModelSelector刷新
+                window.dispatchEvent(new Event('modelsUpdated'));
+                console.log('模型列表已保存并同步到ModelSelector');
+              }
+            }
+          } catch (error) {
+            console.error('保存获取的模型列表失败:', error);
+          }
+        }, 100);
       } else {
+        // 处理失败情况：后端返回 success: false 或没有模型数据
+        const errorMessage = result.error || '获取模型列表失败';
+        console.error(`${providerId}获取模型失败:`, errorMessage);
+        
         setModelFetchResults(prev => ({
           ...prev,
           [providerId]: {
             success: false,
             models: [],
-            message: result.error || '获取模型列表失败'
+            message: errorMessage
           }
         }));
       }
-    } catch (_error) {
+    } catch (error) {
+      // 网络错误或其他未预期的错误
+      console.error(`${providerId}获取模型网络错误:`, error);
       setModelFetchResults(prev => ({
         ...prev,
         [providerId]: {
@@ -906,20 +1062,92 @@ export default function Settings() {
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-6">
-            <div className="flex items-center">
-              <Link
-                to="/"
-                className="inline-flex items-center text-gray-500 hover:text-gray-700 transition-colors mr-4"
-              >
-                <ArrowLeft className="w-5 h-5 mr-1" />
-                返回聊天
-              </Link>
-              <SettingsIcon className="w-8 h-8 text-blue-600 mr-3" />
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">AI服务配置</h1>
-                <p className="mt-1 text-sm text-gray-500">
-                  配置和管理您的AI服务提供商
-                </p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <Link
+                  to="/"
+                  className="inline-flex items-center text-gray-500 hover:text-gray-700 transition-colors mr-4"
+                >
+                  <ArrowLeft className="w-5 h-5 mr-1" />
+                  返回聊天
+                </Link>
+                <SettingsIcon className="w-8 h-8 text-blue-600 mr-3" />
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">AI服务配置</h1>
+                  <p className="mt-1 text-sm text-gray-500">
+                    配置和管理您的AI服务提供商
+                  </p>
+                </div>
+              </div>
+              
+              {/* 清除缓存按钮 */}
+              <div className="flex flex-col items-end space-y-2">
+                <button
+                  onClick={resetAllModelsToDefault}
+                  disabled={resetStatus.status === 'loading'}
+                  className="inline-flex items-center px-4 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${resetStatus.status === 'loading' ? 'animate-spin' : ''}`} />
+                  {resetStatus.status === 'loading' ? '重置中...' : '重置所有模型'}
+                </button>
+                
+                {/* 状态提示 */}
+                {resetStatus.status !== 'idle' && (
+                  <div className={`text-sm px-3 py-1 rounded-md ${
+                    resetStatus.status === 'success' ? 'text-green-700 bg-green-50 border border-green-200' :
+                    resetStatus.status === 'error' ? 'text-red-700 bg-red-50 border border-red-200' :
+                    'text-blue-700 bg-blue-50 border border-blue-200'
+                  }`}>
+                    {resetStatus.message}
+                  </div>
+                )}
+                
+                {/* 确认对话框 */}
+                {showResetConfirm && (
+                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">确认重置</h3>
+                      <p className="text-sm text-gray-600 mb-6">
+                        确定要重置所有模型吗？这会删除所有通过"获取模型列表"获取的动态模型，恢复到代码预设的默认模型列表。
+                      </p>
+                      <div className="flex justify-end space-x-3">
+                        <button
+                          onClick={() => setShowResetConfirm(false)}
+                          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
+                        >
+                          取消
+                        </button>
+                        <button
+                          onClick={executeReset}
+                          className="px-4 py-2 text-sm font-medium text-white bg-red-600 border border-transparent rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
+                        >
+                          确认重置
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* 加载弹窗 */}
+                {showResetLoading && (
+                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg p-8 max-w-sm mx-4 shadow-xl">
+                      <div className="flex flex-col items-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600 mb-4"></div>
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">正在重置模型</h3>
+                        <p className="text-sm text-gray-600 text-center">
+                          {resetStatus.message}
+                        </p>
+                        {resetStatus.status === 'success' && (
+                          <div className="mt-3 flex items-center text-green-600">
+                            <Check className="w-5 h-5 mr-2" />
+                            <span className="text-sm font-medium">重置完成，即将刷新页面...</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -974,6 +1202,21 @@ export default function Settings() {
                 >
                   <div className="flex items-center">
                     <span>自定义模型</span>
+                  </div>
+                </button>
+                
+                {/* 用户管理标签 */}
+                <button
+                  onClick={() => setActiveTab('user-management')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
+                    activeTab === 'user-management'
+                      ? 'bg-indigo-100 text-indigo-700 border-r-2 border-indigo-500'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center">
+                    <User className="w-4 h-4 mr-2" />
+                    <span>用户管理</span>
                   </div>
                 </button>
               </div>
@@ -1046,6 +1289,66 @@ export default function Settings() {
                                 <span className="ml-3 text-sm text-gray-600">
                                   {fieldValue === 'true' ? '已启用' : '已禁用'}
                                 </span>
+                                {/* 如果是 OpenAI 的 Responses API 开关，显示测试按钮 */}
+                                {provider.id === 'openai' && field.name === 'use_responses_api' && fieldValue === 'true' && (
+                                  <button
+                                    onClick={async () => {
+                                      const config = getProviderConfig(provider.id);
+                                      if (!config?.config.api_key) {
+                                        alert('请先配置 API Key');
+                                        return;
+                                      }
+                                      
+                                      setTestingProvider(`${provider.id}-responses`);
+                                      try {
+                                        const response = await fetch('/api/chat', {
+                                          method: 'POST',
+                                          headers: {
+                                            'Content-Type': 'application/json',
+                                          },
+                                          body: JSON.stringify({
+                                            message: 'Hello! 这是一个 Responses API 测试。',
+                                            provider: 'openai',
+                                            model: config.model || 'gpt-4o',
+                                            userId: getUserId(), // 使用真实的用户ID
+                                            parameters: {
+                                              temperature: 0.7,
+                                              maxTokens: 50,
+                                              useResponsesAPI: true // 添加标识使用Responses API
+                                            }
+                                          })
+                                        });
+                                        
+                                        const result = await response.json();
+                                        
+                                        setTestResults(prev => ({
+                                          ...prev,
+                                          [`${provider.id}-responses`]: {
+                                            success: result.success,
+                                            message: result.success 
+                                              ? `Responses API 测试成功！响应内容: ${result.response ? result.response.slice(0, 50) + '...' : '无'}` 
+                                              : `Responses API 测试失败: ${result.error || '未知错误'}`
+                                          }
+                                        }));
+                                      } catch (error) {
+                                        setTestResults(prev => ({
+                                          ...prev,
+                                          [`${provider.id}-responses`]: {
+                                            success: false,
+                                            message: `Responses API 测试失败: ${error instanceof Error ? error.message : '网络错误'}`
+                                          }
+                                        }));
+                                      } finally {
+                                        setTestingProvider(null);
+                                      }
+                                    }}
+                                    disabled={testingProvider === `${provider.id}-responses`}
+                                    className="ml-3 inline-flex items-center px-3 py-1 border border-blue-300 text-xs font-medium rounded text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <TestTube className="w-3 h-3 mr-1" />
+                                    {testingProvider === `${provider.id}-responses` ? '测试中...' : '测试'}
+                                  </button>
+                                )}
                               </div>
                             ) : field.type === 'number' ? (
                               <div className="relative">
@@ -1125,7 +1428,14 @@ export default function Settings() {
                             {provider.models.map((model, index) => {
                               const modelId = typeof model === 'string' ? model : model?.id || model?.name || `model-${index}`;
                               const modelName = typeof model === 'string' ? model : model?.name || model?.id || `Model ${index + 1}`;
-                              const isSelected = config?.models?.includes(modelId) ?? true; // 默认选中所有模型
+                              
+              // 简化选中状态逻辑：当config.models存在时检查包含，否则默认全选
+                              const isSelected = config?.models && config.models.length > 0 
+                                ? config.models.some(m => {
+                                    const configModelId = typeof m === 'string' ? m : m?.id || m?.name;
+                                    return configModelId === modelId;
+                                  })
+                                : true;
                               
                               return (
                                 <label key={`${provider.id}-${modelId}-${index}`} className="flex items-center space-x-2 cursor-pointer">
@@ -1133,10 +1443,21 @@ export default function Settings() {
                                     type="checkbox"
                                     checked={isSelected}
                                     onChange={(e) => {
-                                      const currentModels = config?.models || provider.models.map(m => typeof m === 'string' ? m : m?.id || m?.name || '');
+                                      // 获取当前所有模型ID作为基础
+                                      const allModelIds = provider.models.map(m => 
+                                        typeof m === 'string' ? m : m?.id || m?.name || ''
+                                      ).filter(id => id !== '');
+                                      
+                                      // 获取当前选中的模型列表
+                                      const currentSelectedModels = (config?.models && config.models.length > 0) 
+                                        ? config.models.map(m => typeof m === 'string' ? m : m?.id || m?.name || '').filter(id => id !== '')
+                                        : allModelIds;
+                                      
+                                      // 更新选中状态
                                       const newModels = e.target.checked 
-                                        ? [...currentModels.filter(m => m !== modelId), modelId]
-                                        : currentModels.filter(m => m !== modelId);
+                                        ? [...new Set([...currentSelectedModels, modelId])] // 添加并去重
+                                        : currentSelectedModels.filter(m => m !== modelId); // 移除
+                                      
                                       updateConfig(provider.id, 'models', newModels);
                                     }}
                                     className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
@@ -1167,6 +1488,28 @@ export default function Settings() {
                               testResult.success ? 'text-green-700' : 'text-red-700'
                             }`}>
                               {testResult.message}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Responses API 特定测试结果 */}
+                      {testResults[`${provider.id}-responses`] && (
+                        <div className={`p-3 rounded-md border ${
+                          testResults[`${provider.id}-responses`].success 
+                            ? 'bg-green-50 border-green-200' 
+                            : 'bg-red-50 border-red-200'
+                        }`}>
+                          <div className="flex items-center">
+                            {testResults[`${provider.id}-responses`].success ? (
+                              <Check className="w-4 h-4 text-green-500 mr-2" />
+                            ) : (
+                              <AlertCircle className="w-4 h-4 text-red-500 mr-2" />
+                            )}
+                            <span className={`text-sm ${
+                              testResults[`${provider.id}-responses`].success ? 'text-green-700' : 'text-red-700'
+                            }`}>
+                              {testResults[`${provider.id}-responses`].message}
                             </span>
                           </div>
                         </div>
@@ -1499,6 +1842,188 @@ export default function Settings() {
                       </button>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+            {/* 用户管理面板 */}
+            {activeTab === 'user-management' && (
+              <div className="bg-white rounded-lg border border-gray-200">
+                <div className="px-6 py-4 border-b border-gray-200">
+                  <div className="flex items-center">
+                    <User className="w-6 h-6 text-indigo-600 mr-3" />
+                    <div>
+                      <h2 className="text-lg font-medium text-gray-900">用户管理</h2>
+                      <p className="mt-1 text-sm text-gray-500">管理您的账户信息和安全设置</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-6 py-6">
+                  {!user ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <User className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                      <p>请先登录才能管理用户信息</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-8">
+                      {/* 个人信息区域 */}
+                      <div>
+                        <h3 className="text-md font-medium text-gray-900 mb-4">个人信息</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              用户名
+                            </label>
+                            <input
+                              type="text"
+                              value={user.username}
+                              disabled
+                              className="w-full px-3 py-2 border border-gray-300 rounded bg-gray-50 text-gray-500"
+                            />
+                            <p className="mt-1 text-sm text-gray-500">用户名无法修改</p>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              显示名称
+                            </label>
+                            <input
+                              type="text"
+                              value={user.displayName || ''}
+                              disabled
+                              className="w-full px-3 py-2 border border-gray-300 rounded bg-gray-50 text-gray-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              邮箱地址
+                            </label>
+                            <input
+                              type="email"
+                              value={user.email || ''}
+                              disabled
+                              className="w-full px-3 py-2 border border-gray-300 rounded bg-gray-50 text-gray-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              注册时间
+                            </label>
+                            <input
+                              type="text"
+                              value={new Date(user.created_at).toLocaleString()}
+                              disabled
+                              className="w-full px-3 py-2 border border-gray-300 rounded bg-gray-50 text-gray-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 密码修改区域 */}
+                      <div className="border-t border-gray-200 pt-8">
+                        <div className="flex items-center mb-4">
+                          <Lock className="w-5 h-5 text-indigo-600 mr-2" />
+                          <h3 className="text-md font-medium text-gray-900">修改密码</h3>
+                        </div>
+                        
+                        <form onSubmit={handlePasswordChange} className="space-y-4">
+                          {/* 成功/错误消息 */}
+                          {passwordSuccess && (
+                            <div className="p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm">
+                              {passwordSuccess}
+                            </div>
+                          )}
+                          
+                          {passwordError && (
+                            <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+                              {passwordError}
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* 当前密码 */}
+                            <div className="md:col-span-2">
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                当前密码 *
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={showUserPasswords ? "text" : "password"}
+                                  value={currentPassword}
+                                  onChange={(e) => setCurrentPassword(e.target.value)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 pr-10"
+                                  placeholder="输入当前密码"
+                                  disabled={authLoading}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowUserPasswords(!showUserPasswords)}
+                                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                                  disabled={authLoading}
+                                >
+                                  {showUserPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* 新密码 */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                新密码 *
+                              </label>
+                              <input
+                                type={showUserPasswords ? "text" : "password"}
+                                value={newPassword}
+                                onChange={(e) => setNewPassword(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                placeholder="设置新密码"
+                                disabled={authLoading}
+                              />
+                            </div>
+
+                            {/* 确认新密码 */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                确认新密码 *
+                              </label>
+                              <input
+                                type={showUserPasswords ? "text" : "password"}
+                                value={confirmNewPassword}
+                                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                placeholder="再次输入新密码"
+                                disabled={authLoading}
+                              />
+                            </div>
+                          </div>
+
+                          {/* 密码强度指示器 */}
+                          {newPassword && (
+                            <PasswordStrength 
+                              password={newPassword} 
+                              onValidation={(isValid, errors, strength) => {
+                                setPasswordValidation({ isValid, errors, strength });
+                              }}
+                            />
+                          )}
+
+                          {/* 提交按钮 */}
+                          <div className="pt-4">
+                            <button
+                              type="submit"
+                              disabled={authLoading || !currentPassword || !newPassword || !confirmNewPassword}
+                              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Save className="w-4 h-4" />
+                              {authLoading ? '修改中...' : '修改密码'}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

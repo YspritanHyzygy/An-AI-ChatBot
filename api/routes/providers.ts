@@ -3,31 +3,22 @@
  * 处理用户的AI服务配置、测试连接等功能
  */
 import { Router, type Request, type Response } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { jsonDatabase } from '../services/json-database.js';
 import { aiServiceManager } from '../services/ai-service-manager.js';
 import { AIProvider } from '../services/types.js';
 
 const router = Router();
 
-// Supabase客户端配置 - 延迟初始化
-let supabase: any = null;
+// 初始化JSON数据库
+let dbInitialized = false;
 
-function getSupabaseClient() {
-  if (!supabase) {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_ANON_KEY;
-
-    if (!supabaseUrl || !supabaseKey) {
-      console.error('Missing Supabase configuration:');
-      console.error('SUPABASE_URL:', supabaseUrl ? 'Set' : 'Not set');
-      console.error('SUPABASE_ANON_KEY:', supabaseKey ? 'Set' : 'Not set');
-      console.error('Please check your .env file in the project root directory.');
-      throw new Error('Missing Supabase configuration. Please check your environment variables.');
-    }
-
-    supabase = createClient(supabaseUrl, supabaseKey);
+async function ensureDatabaseInitialized() {
+  if (!dbInitialized) {
+    await jsonDatabase.init();
+    dbInitialized = true;
+    console.log('JSON Database initialized successfully');
   }
-  return supabase;
+  return jsonDatabase;
 }
 
 // 支持的AI服务提供商列表（2025年1月最新真实模型）
@@ -61,12 +52,6 @@ const SUPPORTED_PROVIDERS = [
     displayName: 'Ollama',
     defaultModels: ['llama3.3', 'llama3.2', 'qwen2.5', 'mistral-nemo', 'phi4'],
     defaultBaseUrl: 'http://localhost:11434/v1'
-  },
-  {
-    name: 'qwen',
-    displayName: '阿里云通义千问',
-    defaultModels: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-coder'],
-    defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
   }
 ];
 
@@ -95,11 +80,8 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     }
 
     // 获取用户配置的提供商
-    const { data: userConfigs, error } = await getSupabaseClient()
-      .from('ai_providers')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_active', true);
+    const db = await ensureDatabaseInitialized();
+    const { data: userConfigs, error } = await db.getAIProvidersByUserId(userId);
 
     if (error) {
       console.error('获取用户配置失败:', error);
@@ -137,15 +119,22 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     // 返回用户配置的提供商和模型
     const configuredProviders = userConfigs.map((config: any) => {
       const defaultProvider = SUPPORTED_PROVIDERS.find(p => p.name === config.provider_name);
+      
+      // 优先使用用户保存的模型列表，其次使用默认列表
+      let modelsList = [];
+      if (config.available_models && Array.isArray(config.available_models) && config.available_models.length > 0) {
+        modelsList = config.available_models;
+      } else if (defaultProvider?.defaultModels) {
+        modelsList = defaultProvider.defaultModels;
+      }
+      
       return {
         provider_name: config.provider_name,
         id: config.provider_name,
         name: defaultProvider?.displayName || config.provider_name,
-        models: config.available_models && config.available_models.length > 0 
-          ? config.available_models 
-          : defaultProvider?.defaultModels || [],
+        models: modelsList,
         config: {
-          model: config.default_model || (defaultProvider?.defaultModels && defaultProvider.defaultModels[0]) || ''
+          model: config.default_model || (modelsList.length > 0 ? modelsList[0] : '')
         }
       };
     });
@@ -211,11 +200,6 @@ router.get('/supported', async (_req: Request, res: Response): Promise<void> => 
           name: 'Ollama',
           description: '本地运行的开源模型',
           requiresApiKey: false
-        },
-        qwen: {
-          name: '阿里云通义千问',
-          description: '通义千问系列模型',
-          requiresApiKey: true
         }
       }[provider];
 
@@ -255,11 +239,8 @@ router.get('/config', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const { data, error } = await getSupabaseClient()
-      .from('ai_providers')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_active', true);
+    const db = await ensureDatabaseInitialized();
+    const { data, error } = await db.getAIProvidersByUserId(userId);
 
     if (error) {
       res.status(500).json({
@@ -293,7 +274,8 @@ router.post('/config', async (req: Request, res: Response): Promise<void> => {
       apiKey, 
       baseUrl, 
       availableModels = [], 
-      defaultModel 
+      defaultModel,
+      extraConfig = {}
     } = req.body;
     
     if (!userId || !providerName) {
@@ -314,23 +296,25 @@ router.post('/config', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 使用upsert操作（如果存在则更新，不存在则插入）
-    const { data, error } = await getSupabaseClient()
-      .from('ai_providers')
-      .upsert({
-        user_id: userId,
-        provider_name: providerName,
-        api_key: apiKey,
-        base_url: baseUrl || supportedProvider.defaultBaseUrl,
-        available_models: availableModels.length > 0 ? availableModels : supportedProvider.defaultModels,
-        default_model: defaultModel || supportedProvider.defaultModels[0],
-        is_active: true,
-        updated_at: new Date().toISOString()
-      }, {
-        onConflict: 'user_id,provider_name'
-      })
-      .select()
-      .single();
+    // 使用JSON数据库保存配置
+    const db = await ensureDatabaseInitialized();
+    
+    const configData = {
+      user_id: userId,
+      provider_name: providerName,
+      api_key: apiKey,
+      base_url: baseUrl || supportedProvider.defaultBaseUrl,
+      available_models: availableModels.length > 0 ? availableModels : supportedProvider.defaultModels,
+      default_model: defaultModel || supportedProvider.defaultModels[0],
+      is_active: true,
+      // 合并额外的配置字段（如use_responses_api等）
+      ...extraConfig
+    };
+    
+    // 使用新的更新方法
+    const result = await db.updateAIProviderConfig(userId, providerName, configData);
+    
+    const { data, error } = result;
 
     if (error) {
       res.status(500).json({
@@ -353,6 +337,80 @@ router.post('/config', async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
+ * 重置所有AI服务提供商的模型配置到默认状态
+ * POST /api/providers/reset
+ */
+router.post('/reset', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      res.status(400).json({
+        success: false,
+        error: '缺少用户ID'
+      });
+      return;
+    }
+
+    const db = await ensureDatabaseInitialized();
+    
+    // 获取用户的所有AI服务提供商配置
+    const { data: userConfigs, error: getError } = await db.getAIProvidersByUserId(userId);
+    
+    if (getError) {
+      console.error('获取用户配置失败:', getError);
+      res.status(500).json({
+        success: false,
+        error: '获取用户配置失败'
+      });
+      return;
+    }
+
+    let resetCount = 0;
+    
+    // 如果用户有配置，则清空所有提供商的available_models字段
+    if (userConfigs && userConfigs.length > 0) {
+      for (const config of userConfigs) {
+        // 获取默认模型列表
+        const defaultProvider = SUPPORTED_PROVIDERS.find(p => p.name === config.provider_name);
+        const defaultModel = defaultProvider?.defaultModels?.[0] || config.default_model;
+        
+        const { error: updateError } = await db.updateAIProviderConfig(userId, config.provider_name, {
+          user_id: userId,
+          provider_name: config.provider_name,
+          api_key: config.api_key,
+          base_url: config.base_url,
+          available_models: [], // 清空获取的模型列表
+          default_model: defaultModel,
+          is_active: config.is_active
+        });
+        
+        if (updateError) {
+          console.error(`重置${config.provider_name}配置失败:`, updateError);
+        } else {
+          resetCount++;
+        }
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: '所有模型配置已重置到默认状态',
+      data: {
+        resetCount
+      }
+    });
+    
+  } catch (error) {
+    console.error('重置模型配置错误:', error);
+    res.status(500).json({
+      success: false,
+      error: '重置模型配置失败'
+    });
+  }
+});
+
+/**
  * 测试AI服务连接
  * POST /api/providers/test
  */
@@ -360,10 +418,19 @@ router.post('/test', async (req: Request, res: Response): Promise<void> => {
   try {
     const { providerName, apiKey, baseUrl, model } = req.body;
     
-    if (!providerName || !apiKey) {
+    if (!providerName) {
       res.status(400).json({
         success: false,
-        error: '缺少必要参数'
+        error: '缺少提供商名称参数'
+      });
+      return;
+    }
+    
+    // 验证API Key（Ollama除外）
+    if (providerName !== 'ollama' && !apiKey) {
+      res.status(400).json({
+        success: false,
+        error: 'API Key不能为空'
       });
       return;
     }
@@ -387,7 +454,6 @@ router.post('/test', async (req: Request, res: Response): Promise<void> => {
       case 'claude':
       case 'gemini':
       case 'xai':
-      case 'qwen':
         if (!apiKey) {
           errors.push('API Key不能为空');
         }
@@ -529,17 +595,59 @@ router.post('/models', async (req: Request, res: Response): Promise<void> => {
       });
     } catch (error: any) {
       console.error(`获取${providerName}模型列表错误:`, error);
-      res.status(500).json({
+      
+      // 根据错误类型返回不同的错误信息
+      let errorMessage = '获取模型列表失败';
+      
+      if (error.message) {
+        if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+          errorMessage = 'API Key无效，请检查密钥是否正确';
+        } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
+          errorMessage = 'API Key权限不足或已过期';
+        } else if (error.message.includes('429') || error.message.includes('rate limit')) {
+          errorMessage = 'API调用频率超限，请稍后重试';
+        } else if (error.message.includes('timeout') || error.message.includes('ECONNREFUSED')) {
+          errorMessage = '连接超时，请检查网络或服务地址';
+        } else {
+          errorMessage = `获取模型列表失败: ${error.message}`;
+        }
+      }
+      
+      // 返回错误响应而不是抛出异常
+      res.json({
         success: false,
-        error: `获取模型列表失败: ${error.message}`
+        error: errorMessage,
+        data: {
+          provider: providerName,
+          models: []
+        }
       });
     }
   } catch (error: any) {
-    console.error('获取模型列表错误:', error);
-    res.status(500).json({
-      success: false,
-      error: `服务器内部错误: ${error.message}`
-    });
+    console.error('获取模型列表外层错误:', error);
+    
+    // 检查是否是AIServiceError
+    if (error.name === 'AIServiceError') {
+      // 直接使用AIServiceError的错误信息
+      res.json({
+        success: false,
+        error: error.message || '获取模型列表失败',
+        data: {
+          provider: req.body?.providerName || 'unknown',
+          models: []
+        }
+      });
+    } else {
+      // 其他类型的错误
+      res.status(500).json({
+        success: false,
+        error: `服务器内部错误: ${error.message}`,
+        data: {
+          provider: req.body?.providerName || 'unknown',
+          models: []
+        }
+      });
+    }
   }
 });
 
@@ -551,10 +659,8 @@ router.delete('/config/:providerId', async (req: Request, res: Response): Promis
   try {
     const { providerId } = req.params;
     
-    const { error } = await getSupabaseClient()
-      .from('ai_providers')
-      .delete()
-      .eq('id', providerId);
+    const db = await ensureDatabaseInitialized();
+    const { error } = await db.from('ai_providers').delete().eq('id', providerId);
 
     if (error) {
       res.status(500).json({
@@ -593,10 +699,8 @@ router.put('/default', async (req: Request, res: Response): Promise<void> => {
     }
 
     // 更新用户的默认提供商
-    const { error } = await getSupabaseClient()
-      .from('users')
-      .update({ default_provider: providerName })
-      .eq('id', userId);
+    const db = await ensureDatabaseInitialized();
+    const { error } = await db.from('users').update({ default_provider: providerName }).eq('id', userId);
 
     if (error) {
       res.status(500).json({
@@ -634,12 +738,15 @@ router.get('/custom-models', async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const { data, error } = await getSupabaseClient()
-      .from('custom_models')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
+    const db = await ensureDatabaseInitialized();
+    // 简化查询，直接获取所有custom_models数据
+    const allCustomModels = db.from('custom_models').select().data;
+    const userCustomModels = allCustomModels.filter((model: any) => 
+      model.user_id === userId && model.is_active === true
+    ).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    
+    const data = userCustomModels;
+    const error = null;
 
     if (error) {
       console.error('获取自定义模型错误:', error);
@@ -680,12 +787,11 @@ router.post('/custom-models', async (req: Request, res: Response): Promise<void>
     }
 
     // 检查模型名称是否已存在
-    const { data: existing } = await getSupabaseClient()
-      .from('custom_models')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('name', name)
-      .single();
+    const db = await ensureDatabaseInitialized();
+    const allCustomModels = db.from('custom_models').select().data;
+    const existing = allCustomModels.find((model: any) => 
+      model.user_id === userId && model.name === name
+    );
 
     if (existing) {
       res.status(400).json({
@@ -695,19 +801,15 @@ router.post('/custom-models', async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const { data, error } = await getSupabaseClient()
-      .from('custom_models')
-      .insert({
-        user_id: userId,
-        name,
-        display_name: displayName,
-        provider,
-        api_endpoint: apiEndpoint,
-        model_id: modelId,
-        description
-      })
-      .select()
-      .single();
+    const { data, error } = await db.from('custom_models').insert({
+      user_id: userId,
+      name,
+      display_name: displayName,
+      provider,
+      api_endpoint: apiEndpoint,
+      model_id: modelId,
+      description
+    });
 
     if (error) {
       console.error('创建自定义模型错误:', error);
@@ -761,12 +863,8 @@ router.put('/custom-models/:id', async (req: Request, res: Response): Promise<vo
     if (description !== undefined) updateData.description = description;
     if (isActive !== undefined) updateData.is_active = isActive;
 
-    const { data, error } = await getSupabaseClient()
-      .from('custom_models')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
+    const db = await ensureDatabaseInitialized();
+    const { data, error } = await db.from('custom_models').update(updateData).eq('id', id);
 
     if (error) {
       console.error('更新自定义模型错误:', error);
@@ -807,10 +905,8 @@ router.delete('/custom-models/:id', async (req: Request, res: Response): Promise
       return;
     }
 
-    const { error } = await getSupabaseClient()
-      .from('custom_models')
-      .delete()
-      .eq('id', id);
+    const db = await ensureDatabaseInitialized();
+    const { error } = await db.from('custom_models').delete().eq('id', id);
 
     if (error) {
       console.error('删除自定义模型错误:', error);
@@ -827,6 +923,83 @@ router.delete('/custom-models/:id', async (req: Request, res: Response): Promise
     });
   } catch (error: any) {
     console.error('删除自定义模型错误:', error);
+    res.status(500).json({
+      success: false,
+      error: `服务器内部错误: ${error.message}`
+    });
+  }
+});
+
+/**
+ * 重置所有动态获取的模型到默认状态
+ * POST /api/providers/reset-models
+ */
+router.post('/reset-models', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      res.status(400).json({
+        success: false,
+        error: '缺少用户ID'
+      });
+      return;
+    }
+
+    const db = await ensureDatabaseInitialized();
+    
+    // 获取该用户所有的AI提供商配置
+    const { data: userConfigs, error: fetchError } = await db.getAIProvidersByUserId(userId);
+    
+    if (fetchError) {
+      console.error('获取用户配置失败:', fetchError);
+      res.status(500).json({
+        success: false,
+        error: '获取用户配置失败'
+      });
+      return;
+    }
+    
+    if (!userConfigs || userConfigs.length === 0) {
+      res.json({
+        success: true,
+        message: '没有找到需要重置的配置'
+      });
+      return;
+    }
+    
+    // 清除每个提供商的available_models字段
+    const resetPromises = userConfigs.map((config: any) => {
+      return db.from('ai_providers')
+        .update({ 
+          available_models: [],
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', config.id);
+    });
+    
+    // 等待所有重置操作完成
+    const results = await Promise.allSettled(resetPromises);
+    
+    // 检查是否有失败的操作
+    const failures = results.filter(result => result.status === 'rejected');
+    if (failures.length > 0) {
+      console.error('部分重置操作失败:', failures);
+      res.status(500).json({
+        success: false,
+        error: `重置失败，${failures.length}个操作出错`
+      });
+      return;
+    }
+    
+    console.log(`成功重置用户${userId}的所有模型配置`);
+    res.json({
+      success: true,
+      message: `成功重置${userConfigs.length}个提供商的模型列表`
+    });
+    
+  } catch (error: any) {
+    console.error('重置模型错误:', error);
     res.status(500).json({
       success: false,
       error: `服务器内部错误: ${error.message}`

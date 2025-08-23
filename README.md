@@ -6,13 +6,16 @@ English | [简体中文](README.zh-CN.md)
 
 ## ✨ Key Features
 
-- 🔄 **Multiple AI Provider Support**: OpenAI, Google Gemini, Anthropic Claude, xAI Grok, Ollama, and Qwen
-- 🔐 **User-Configurable API Keys**: Securely configure personal API keys through web interface
-- 💬 **Conversation Management**: Create, save, and manage multiple chat conversations
+- 🔄 **Multiple AI Provider Support**: OpenAI, Google Gemini, Anthropic Claude, xAI Grok, Ollama
+- 👤 **User Authentication System**: User registration and login with data isolation and personalized settings
+- 🔐 **User-Configurable API Keys**: Configure personal API keys through web interface or environment variables
+- 💬 **Conversation Management**: Create, save, and manage multiple chat conversations with independent user data
 - ⚡ **Real-time Chat Interface**: Modern responsive chat UI with message history
 - 📝 **Markdown Rendering**: Full Markdown format support for AI responses
-- 💾 **Persistent Storage**: All conversations and messages stored in Supabase database
-- 🛠️ **Flexible Configuration**: Support both user configuration and environment variables
+- 💾 **Local Data Storage**: All conversations and messages stored in local JSON files
+- 📤 **Data Export/Import**: Support user data backup and migration functionality
+- 🚀 **Zero Configuration**: No external service registration required, ready to use
+- 💼 **Business-Ready**: Reserved subscription and payment interfaces for future expansion
 - 🔒 **TypeScript**: Complete type safety for both frontend and backend
 
 ## Tech Stack
@@ -26,14 +29,13 @@ English | [简体中文](README.zh-CN.md)
 
 ### Backend
 - **Node.js** with Express.js and TypeScript
-- **Supabase** for database and authentication
+- **Local JSON Database** for data storage
 - **AI Service Adapters** for multiple AI providers
 
 ## 📋 Prerequisites
 
 - **Node.js 18+** and npm
-- **Supabase account and project** ([Sign up for free](https://supabase.com))
-- **AI Provider API Keys** (can be configured through web interface, no need to prepare in advance)
+- **AI Provider API Keys** (can be configured through web interface or environment variables)
 
 ## 🚀 Quick Start
 
@@ -41,60 +43,40 @@ English | [简体中文](README.zh-CN.md)
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd gemini-video-webui
+git clone https://github.com/YspritanHyzygy/ONMI-CHATBOX.git
+cd ONMI-CHATBOX
 
 # Install dependencies
 npm install
 ```
 
-### Step 2: Configure Supabase Database
+### Step 2: Configure AI Services (Optional)
 
-#### 2.1 Create Supabase Project
-1. Visit [Supabase](https://supabase.com) and sign up for an account
-2. Create a new project and note down the project URL and API key
-3. Wait for project initialization to complete (about 2-3 minutes)
+**Option 1: Environment Variables (Recommended)**
 
-#### 2.2 Set Up Database
-1. In the Supabase console, go to **SQL Editor**
-2. Execute the SQL files in the `supabase/migrations/` directory in order:
-   - `001_initial_schema.sql`
-   - `002_custom_models.sql` 
-   - `003_fix_user_id_type.sql`
-   - `004_fix_all_user_id_types.sql`
-   - `005_fix_conversations_and_messages.sql`
-
-#### 2.3 Configure Environment Variables
-```bash
-# Copy environment template
-cp .env.example .env
-```
-
-Edit the `.env` file with your Supabase configuration:
+Edit the `.env` file and add your AI API keys:
 ```env
-# Supabase Configuration (Required)
-SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
+# AI Provider API Keys (Optional - can also be configured via web interface)
+OPENAI_API_KEY=sk-your-openai-key
+GEMINI_API_KEY=your-gemini-key
+CLAUDE_API_KEY=your-claude-key
+XAI_API_KEY=your-grok-key
 
-# AI Provider API Keys (Optional - Recommended to configure via web interface)
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...
-CLAUDE_API_KEY=...
-XAI_API_KEY=...
-QWEN_API_KEY=...
+# Ollama Configuration (if using local Ollama)
 OLLAMA_BASE_URL=http://localhost:11434/v1
 ```
 
-> 💡 **Tip**: AI provider API keys can be configured later through the web interface, no need to fill them in this step.
+**Option 2: Web Interface Configuration**
+Configure through the settings page after starting the application.
 
 ### Step 3: Start the Application
 
-#### Option 1: Start Both Frontend and Backend (Recommended)
 ```bash
+# Start both frontend and backend (recommended)
 npm run dev
 ```
 
-#### Option 2: Start Separately
+**Or start separately:**
 ```bash
 # Terminal 1: Start backend service (port 3001)
 npm run server:dev
@@ -103,16 +85,23 @@ npm run server:dev
 npm run client:dev
 ```
 
-### Step 4: Configure AI Providers
+### Step 4: Start Using
 
 1. 🌐 Visit `http://localhost:5173`
-2. ⚙️ Click the settings button in the top right corner
-3. 🔑 Configure your AI provider API keys
-4. ✅ Click "Test Connection" to verify configuration
-5. 🎯 Select your default model
-6. 💬 Return to chat page and start chatting!
+2. 👤 **Register/Login**: Create a new account or login with existing username
+3. 💬 Start chatting directly, or configure AI services first
+4. ⚙️ Click the settings button to configure API keys (optional)
+5. ✅ Click "Test Connection" to verify configuration
+6. 🎯 Select your default model
+7. 🎉 Start chatting!
 
-### Step 5: Production Deployment
+### Step 5: Data Management (Optional)
+
+- 📤 **Export Data**: Backup your conversations and settings
+- 📥 **Import Data**: Restore from backup files
+- 🔄 **Switch Users**: Each user has isolated data
+
+### Step 6: Production Deployment
 
 ```bash
 # Build frontend
@@ -124,11 +113,9 @@ npm start
 
 ## 🔧 Configuration Verification
 
-### Check Supabase Connection
+### Check Service Status
 After starting the application, check if the terminal output includes:
 ```
-SUPABASE_URL: Set
-SUPABASE_ANON_KEY: Set
 Server ready on port 3001
 ```
 
@@ -140,9 +127,6 @@ Successful frontend startup will display:
 ```
 
 ## ❓ Troubleshooting
-
-### Q: Supabase connection failed
-**A**: Check if the URL and key in the `.env` file are correct, ensure there are no extra spaces or quotes.
 
 ### Q: AI provider test connection failed
 **A**: 
@@ -162,8 +146,8 @@ netstat -ano | findstr :5173
 # Backend: modify PORT in api/server.ts
 ```
 
-### Q: Database migration failed
-**A**: Ensure all SQL files are executed in order. If errors occur, you can delete tables and re-execute.
+### Q: No chat history showing?
+**A**: This is normal for first-time use. Local storage will automatically create demo data on first use.
 
 ## Project Structure
 
@@ -177,11 +161,18 @@ netstat -ano | findstr :5173
 │   ├── pages/           # Page components
 │   ├── hooks/           # Custom React hooks
 │   └── lib/            # Utility functions
-├── supabase/             # Database migrations and schema
+├── data/                 # Local data storage folder
+│   └── database.json    # Chat data storage (auto-created)
 └── public/              # Static assets
 ```
 
 ## API Endpoints
+
+### Authentication Endpoints
+- `POST /api/auth/register` - Register new user account
+- `POST /api/auth/login` - User login
+- `GET /api/auth/user/:userId` - Get user information
+- `GET /api/auth/check-username/:username` - Check username availability
 
 ### Chat Endpoints
 - `GET /api/chat/conversations` - Fetch user conversations
@@ -192,6 +183,16 @@ netstat -ano | findstr :5173
 - `GET /api/providers` - Get available AI providers and their configurations
 - `GET /api/providers/supported` - Get list of supported AI providers
 
+### Data Management Endpoints
+- `GET /api/data/export/:userId` - Export user data
+- `POST /api/data/import/:userId` - Import user data
+- `GET /api/data/preview/:userId` - Get export data preview
+
+### Business Endpoints (Future)
+- `GET /api/business/subscription/:userId` - Get subscription information
+- `GET /api/business/usage/:userId` - Get API usage statistics
+- `GET /api/business/plans` - Get available subscription plans
+
 ## 🤖 Supported AI Providers
 
 | Provider | Latest Models | Configuration | How to Get |
@@ -200,7 +201,7 @@ netstat -ano | findstr :5173
 | **Google Gemini** | Gemini-2.5-Pro, Gemini-2.5-Flash, Gemini-2.0-Flash | API Key | [Get API Key](https://aistudio.google.com/app/apikey) |
 | **Anthropic Claude** | Claude-3.5-Sonnet, Claude-3-Opus, Claude-3.5-Haiku | API Key | [Get API Key](https://console.anthropic.com/) |
 | **xAI Grok** | Grok-4, Grok-3, Grok-2-1212, Grok-2-Vision | API Key | [Get API Key](https://console.x.ai/) |
-| **Alibaba Qwen** | Qwen-Max, Qwen-Plus, Qwen-Turbo, Qwen2.5-Coder | API Key | [Get API Key](https://dashscope.console.aliyun.com/) |
+
 | **Ollama** | Llama3.3, Llama3.2, Qwen2.5, Mistral-Nemo, Phi4 | Local Installation | [Download Ollama](https://ollama.ai/) |
 
 ### 💰 Pricing Information
@@ -208,7 +209,7 @@ netstat -ano | findstr :5173
 - **Google Gemini**: Free tier available, pay-per-use after limit
 - **Anthropic Claude**: Pay-per-use, Claude-3.5-Sonnet ~$0.003/1K tokens
 - **xAI Grok**: Pay-per-use
-- **Alibaba Qwen**: Free tier available, pay-per-use after limit
+
 - **Ollama**: Completely free, runs locally
 
 ### 🚀 Recommended Configuration

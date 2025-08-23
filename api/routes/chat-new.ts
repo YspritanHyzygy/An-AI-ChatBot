@@ -292,7 +292,7 @@ router.post('/conversations/:conversationId/messages', async (req: Request, res:
             baseUrl: finalProviderConfig.base_url,
             model: finalModel,
             temperature: 0.7,
-            maxTokens: undefined  // 让Gemini使用模型最大限制
+            maxTokens: 2000
           }
         )) {
           aiResponseContent += chunk.content;
@@ -325,7 +325,7 @@ router.post('/conversations/:conversationId/messages', async (req: Request, res:
             baseUrl: finalProviderConfig.base_url,
             model: finalModel,
             temperature: 0.7,
-            maxTokens: undefined  // 让Gemini使用模型最大限制
+            maxTokens: 2000
           }
         );
 
@@ -443,16 +443,6 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       };
     };
     
-    // 检查是否使用 Responses API
-    const useResponsesAPI = parameters?.useResponsesAPI === true;
-    let actualProvider = provider;
-    
-    // 如果启用了 Responses API，使用 openai-responses 提供商
-    if (useResponsesAPI && provider === 'openai') {
-      actualProvider = 'openai-responses';
-      console.log('[DEBUG] 启用 Responses API，使用 openai-responses 提供商');
-    }
-    
     if (!message) {
       res.status(400).json({
         success: false,
@@ -462,7 +452,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     }
 
     const db = await ensureDatabaseInitialized();
-    let targetConversationId: string | undefined = conversationId;
+    let targetConversationId = conversationId;
     
     // 如果没有提供conversationId，创建新对话
     if (!targetConversationId) {
@@ -487,38 +477,33 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       targetConversationId = newConversation.id;
     }
 
-    // 确保targetConversationId不为undefined
-    if (!targetConversationId) {
-      res.status(500).json({
-        success: false,
-        error: '无法获取对话ID'
-      });
-      return;
-    }
-
     // 获取用户的AI服务配置，如果没有配置则使用默认配置
     let providerConfig;
     const actualUserId = targetConversationId ? userId : 'demo-user-001';
     const { data: userConfigs, error: configError } = await db.getAIProvidersByUserId(actualUserId);
 
+    // 在代码中进行过滤，而不是在数据库查询中
+    const userConfig = userConfigs ? userConfigs.find((config: { provider_name: string }) => config.provider_name === provider) : null;
+
+    // 检查是否使用Responses API
+    let actualProvider = provider;
+    if (provider === 'openai' && parameters?.useResponsesAPI && (userConfig as any)?.use_responses_api === 'true') {
+      actualProvider = 'openai-responses';
+      console.log(`[DEBUG] 切换到 Responses API 提供商: ${actualProvider}`);
+    }
+
     console.log(`[DEBUG] Provider from frontend: "${provider}"`);
     console.log(`[DEBUG] Actual provider to use: "${actualProvider}"`);
     console.log(`[DEBUG] Model from frontend: "${model}"`);
-    console.log(`[DEBUG] Use Responses API: ${useResponsesAPI}`);
     console.log('[DEBUG] All active configs found in DB for user:', JSON.stringify(userConfigs, null, 2));
-
-    // 在代码中进行过滤，而不是在数据库查询中
-    // 对于 Responses API，我们查找 openai 的配置
-    const configProviderName = actualProvider === 'openai-responses' ? 'openai' : actualProvider;
-    const userConfig = userConfigs ? userConfigs.find((config: { provider_name: string }) => config.provider_name === configProviderName) : null;
 
     if (configError || !userConfig) {
       // 如果用户没有配置，尝试使用环境变量中的默认配置
-      const defaultConfig = getDefaultProviderConfig(configProviderName);
+      const defaultConfig = getDefaultProviderConfig(provider);
       if (!defaultConfig) {
         res.status(400).json({
           success: false,
-          error: `请先在设置页面配置${configProviderName}服务的API Key`
+          error: `请先在设置页面配置${provider}服务的API Key`
         });
         return;
       }
@@ -536,7 +521,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       conversation_id: targetConversationId,
       content: message,
       role: 'user',
-      provider: actualProvider,
+      provider: provider,
       model: model
     });
 
@@ -550,7 +535,15 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     }
 
     // 获取对话历史消息
-    const { data: historyMessages, error: historyError } = await db.getMessagesByConversationId(targetConversationId);
+    const { data: historyMessages, error: historyError } = await db.getMessagesByConversationId(targetConversationId!);
+
+    if (!targetConversationId) {
+      res.status(500).json({
+        success: false,
+        error: '对话 ID 为空'
+      });
+      return;
+    }
 
     if (historyError) {
       res.status(500).json({
@@ -568,22 +561,6 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     try {
       const finalModel = model || providerConfig.default_model;
       console.log(`[DEBUG] Final model being used: "${finalModel}"`);
-      console.log(`[DEBUG] Parameters received:`, JSON.stringify(parameters, null, 2));
-      console.log(`[DEBUG] maxTokens value:`, parameters?.maxTokens);
-      console.log(`[DEBUG] maxTokens type:`, typeof parameters?.maxTokens);
-      
-      // 构建AI服务配置
-      const aiConfig = {
-        provider: actualProvider as AIProvider,
-        apiKey: providerConfig.api_key,
-        baseUrl: providerConfig.base_url,
-        model: finalModel,
-        temperature: parameters?.temperature ?? 0.7,
-        maxTokens: parameters?.maxTokens,
-        topP: parameters?.topP ?? 1.0,
-        useResponsesAPI: useResponsesAPI,
-        store: true // 对于 Responses API，默认存储30天
-      };
       
       if (stream) {
         // 流式响应
@@ -599,7 +576,15 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         for await (const chunk of aiServiceManager.streamChat(
           actualProvider as AIProvider,
           messages,
-          aiConfig
+          {
+            provider: actualProvider as AIProvider,
+            apiKey: providerConfig.api_key,
+            baseUrl: providerConfig.base_url,
+            model: finalModel,
+            temperature: parameters?.temperature ?? 0.7,
+            maxTokens: parameters?.maxTokens ?? 2000,
+            topP: parameters?.topP ?? 1.0
+          }
         )) {
           aiResponseContent += chunk.content;
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -614,14 +599,14 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           conversation_id: targetConversationId,
           content: aiResponseContent,
           role: 'assistant',
-          provider: actualProvider,
+          provider,
           model
         });
 
         // 更新对话的最后更新时间
         await db.from('conversations').update({ 
           updated_at: new Date().toISOString(),
-          provider_used: actualProvider,
+          provider_used: provider,
           model_used: model
         }).eq('id', targetConversationId);
 
@@ -632,7 +617,15 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         const aiResponse = await aiServiceManager.chat(
           actualProvider as AIProvider,
           messages,
-          aiConfig
+          {
+            provider: actualProvider as AIProvider,
+            apiKey: providerConfig.api_key,
+            baseUrl: providerConfig.base_url,
+            model: finalModel,
+            temperature: parameters?.temperature ?? 0.7,
+            maxTokens: parameters?.maxTokens ?? 2000,
+            topP: parameters?.topP ?? 1.0
+          }
         );
 
         // 保存AI回复
@@ -640,7 +633,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
           conversation_id: targetConversationId,
           content: aiResponse.content,
           role: 'assistant',
-          provider: actualProvider,
+          provider,
           model
         });
 
@@ -655,7 +648,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         // 更新对话的最后更新时间
         await db.from('conversations').update({ 
           updated_at: new Date().toISOString(),
-          provider_used: actualProvider,
+          provider_used: provider,
           model_used: model
         }).eq('id', targetConversationId);
 
@@ -673,16 +666,20 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       console.error('AI服务调用错误:', aiError);
       
       // 保存错误消息
-      await db.from('messages').insert({
-        conversation_id: targetConversationId,
-        role: 'assistant',
-        content: `抱歉，AI服务暂时不可用：${aiError.message}`,
-        provider: actualProvider,
-        model
-      });
+      try {
+        await db.from('messages').insert({
+          conversation_id: targetConversationId,
+          role: 'assistant',
+          content: `抱歉，AI服务暂时不可用：${aiError.message}`,
+          provider: actualProvider,
+          model
+        });
+      } catch (dbError) {
+        console.error('保存错误消息失败:', dbError);
+      }
 
       if (!res.headersSent) {
-        res.status(500).json({
+        res.json({
           success: false,
           error: `AI服务调用失败：${aiError.message}`
         });
@@ -691,9 +688,9 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('聊天接口错误:', error);
     if (!res.headersSent) {
-      res.status(500).json({
+      res.json({
         success: false,
-        error: '服务器内部错误'
+        error: '服务器内部错误，请稍后重试'
       });
     }
   }

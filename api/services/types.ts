@@ -3,7 +3,7 @@
  */
 
 // AI服务提供商类型
-export type AIProvider = 'openai' | 'openai-responses' | 'claude' | 'gemini' | 'xai' | 'ollama' | 'qwen';
+export type AIProvider = 'openai' | 'openai-responses' | 'claude' | 'gemini' | 'xai' | 'ollama';
 
 // 消息角色
 export type MessageRole = 'user' | 'assistant' | 'system';

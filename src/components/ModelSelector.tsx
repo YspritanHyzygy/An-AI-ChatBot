@@ -27,8 +27,7 @@ const getProviderDisplayName = (providerId: string): string => {
     'claude': 'Anthropic Claude',
     'gemini': 'Google Gemini',
     'xai': 'xAI Grok',
-    'ollama': 'Ollama',
-    'qwen': 'Qwen'
+    'ollama': 'Ollama'
   };
   return providerNames[providerId] || providerId.charAt(0).toUpperCase() + providerId.slice(1);
 };
@@ -57,6 +56,9 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
           const models: ModelOption[] = [];
           const grouped: GroupedModels = {};
           let defaultModelFromSettings: ModelOption | null = null;
+          
+          // 使用Set来跟踪已添加的模型，避免重复
+          const addedModels = new Set<string>();
 
           result.data.forEach((provider: any) => {
             if (provider && Array.isArray(provider.models)) {
@@ -67,15 +69,39 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
               const providerConfig = provider.config || {};
               const defaultModel = providerConfig.model;
               
-              provider.models.forEach((model: string) => {
+              provider.models.forEach((model: string | { id?: string; name?: string; [key: string]: unknown }) => {
+                // 统一处理模型数据，支持字符串和对象两种格式
+                let modelId: string;
+                let modelDisplayName: string;
+                
+                if (typeof model === 'string') {
+                  modelId = model;
+                  modelDisplayName = model;
+                } else if (model && typeof model === 'object') {
+                  modelId = model.id || model.name || String(model);
+                  modelDisplayName = model.name || model.id || String(model);
+                } else {
+                  console.warn('无效的模型数据格式:', model);
+                  return;
+                }
+                
+                // 生成唯一标识符来避免重复
+                const uniqueKey = `${provider.id}-${modelId}`;
+                
+                // 如果已经添加过这个模型，跳过
+                if (addedModels.has(uniqueKey)) {
+                  return;
+                }
+                
                 const modelOption: ModelOption = {
                   provider: provider.id,
                   providerName: providerDisplayName,
-                  model: model,
-                  displayName: model,
+                  model: modelId,
+                  displayName: modelDisplayName,
                 };
                 
                 models.push(modelOption);
+                addedModels.add(uniqueKey);
                 
                 // 按厂商分组
                 if (!grouped[providerDisplayName]) {
@@ -84,7 +110,7 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
                 grouped[providerDisplayName].push(modelOption);
                 
                 // 如果这是设置页面配置的默认模型，记录下来
-                if (model === defaultModel && !defaultModelFromSettings) {
+                if (modelId === defaultModel && !defaultModelFromSettings) {
                   defaultModelFromSettings = modelOption;
                 }
               });
@@ -123,17 +149,14 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
             modelToSelect = models[0];
           }
           
-          // 4. 设置选中的模型
-          if (modelToSelect) {
-            // 如果没有当前选中的模型，或者当前选中的模型与要设置的模型不同，则更新
+          // 4. 设置选中的模型（只在初始化时）
+          if (modelToSelect && availableModels.length === 0) {
+            // 只在第一次加载时设置默认模型
             if (!selectedModel || 
                 selectedModel.model !== modelToSelect.model || 
                 selectedModel.provider !== modelToSelect.provider) {
-              onModelChange(modelToSelect);
-              // 确保localStorage中保存的是完整的ModelOption对象
-              localStorage.setItem('selectedModel', JSON.stringify(modelToSelect));
-              // 触发自定义事件，通知其他组件localStorage已更新
-              window.dispatchEvent(new Event('localStorageChanged'));
+              // 使用setTimeout防止在渲染过程中触发状态更新
+              setTimeout(() => onModelChange(modelToSelect), 0);
             }
           }
         } else {
@@ -148,7 +171,19 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
     };
 
     fetchModels();
-  }, []);
+    
+    // 监听模型列表更新事件
+    const handleModelsUpdated = () => {
+      console.log('Models updated, refetching...');
+      fetchModels();
+    };
+    
+    window.addEventListener('modelsUpdated', handleModelsUpdated);
+    
+    return () => {
+      window.removeEventListener('modelsUpdated', handleModelsUpdated);
+    };
+  }, []);  // 移除不必要的依赖项
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -167,7 +202,7 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
     const handleStorageChange = () => {
       try {
         const savedModel = localStorage.getItem('selectedModel');
-        if (savedModel) {
+        if (savedModel && availableModels.length > 0) {
           const parsedModel = JSON.parse(savedModel);
           const matchedModel = availableModels.find(m => 
             m.model === parsedModel.model && m.provider === parsedModel.provider
@@ -175,7 +210,8 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
           if (matchedModel && (!selectedModel || 
               selectedModel.model !== matchedModel.model || 
               selectedModel.provider !== matchedModel.provider)) {
-            onModelChange(matchedModel);
+            // 使用setTimeout防止在渲染过程中触发状态更新
+            setTimeout(() => onModelChange(matchedModel), 0);
           }
         }
       } catch (e) {
@@ -183,24 +219,30 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
       }
     };
 
-    // 监听storage事件（跨标签页）
-    window.addEventListener('storage', handleStorageChange);
-    
-    // 监听自定义事件（同一页面内）
-    window.addEventListener('localStorageChanged', handleStorageChange);
-    
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('localStorageChanged', handleStorageChange);
-    };
-  }, [availableModels, selectedModel, onModelChange]);
+    // 只在有可用模型时才监听变化
+    if (availableModels.length > 0) {
+      // 监听storage事件（跨标签页）
+      window.addEventListener('storage', handleStorageChange);
+      
+      // 监听自定义事件（同一页面内）
+      window.addEventListener('localStorageChanged', handleStorageChange);
+      
+      return () => {
+        window.removeEventListener('storage', handleStorageChange);
+        window.removeEventListener('localStorageChanged', handleStorageChange);
+      };
+    }
+  }, [availableModels, selectedModel]);  // 移除onModelChange依赖项，避免无限循环
 
   const handleModelSelect = (model: ModelOption) => {
-    onModelChange(model);
-    localStorage.setItem('selectedModel', JSON.stringify(model));
-    // 触发自定义事件，通知其他组件localStorage已更新
-    window.dispatchEvent(new Event('localStorageChanged'));
-    setIsOpen(false);
+    try {
+      onModelChange(model);
+      localStorage.setItem('selectedModel', JSON.stringify(model));
+      setIsOpen(false);
+    } catch (error) {
+      console.error('选择模型失败:', error);
+      setError('选择模型失败，请重试');
+    }
   };
 
   if (loading) {
@@ -241,9 +283,9 @@ export default function ModelSelector({ selectedModel, onModelChange, className 
                   {providerName}
                 </div>
                 <div className="py-1">
-                  {models.map(model => (
+                  {models.map((model, index) => (
                     <button
-                      key={`${model.provider}-${model.model}`}
+                      key={`${model.provider}-${model.model}-${index}`}
                       onClick={() => handleModelSelect(model)}
                       className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center justify-between transition-colors"
                     >

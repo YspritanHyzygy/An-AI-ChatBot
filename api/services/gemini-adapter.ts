@@ -56,9 +56,13 @@ export class GeminiAdapter implements AIServiceAdapter {
       }
 
       const generationConfig: any = {
-        temperature: config.temperature || 0.7,
-        maxOutputTokens: config.maxTokens || 2000
+        temperature: config.temperature || 0.7
       };
+
+      // 只有当用户明确设置maxTokens时才限制输出长度，否则让模型自动判断
+      if (config.maxTokens) {
+        generationConfig.maxOutputTokens = config.maxTokens;
+      }
 
       // Gemini 支持 topP 参数
       if (config.topP !== undefined) {
@@ -123,6 +127,13 @@ export class GeminiAdapter implements AIServiceAdapter {
 
   async *streamChat(messages: ChatMessage[], config: AIServiceConfig): AsyncGenerator<StreamResponse> {
     try {
+      console.log('[Gemini] 开始流式聊天，配置:', {
+        model: config.model,
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        messagesCount: messages.length
+      });
+      
       const client = this.createClient(config);
       const { history, systemInstruction } = this.convertMessages(messages);
       
@@ -131,10 +142,17 @@ export class GeminiAdapter implements AIServiceAdapter {
         throw new AIServiceError('No user message found', 'gemini');
       }
 
+      console.log('[Gemini] 用户消息:', lastUserMessage.content.substring(0, 100) + '...');
+      console.log('[Gemini] 历史消息数量:', history.length);
+
       const generationConfig: any = {
-        temperature: config.temperature || 0.7,
-        maxOutputTokens: config.maxTokens || 2000
+        temperature: config.temperature || 0.7
       };
+
+      // 只有当用户明确设置maxTokens时才限制输出长度，否则让模型自动判断
+      if (config.maxTokens) {
+        generationConfig.maxOutputTokens = config.maxTokens;
+      }
 
       // Gemini 支持 topP 参数
       if (config.topP !== undefined) {
@@ -146,33 +164,56 @@ export class GeminiAdapter implements AIServiceAdapter {
         generationConfig.stopSequences = Array.isArray(config.stop) ? config.stop : [config.stop];
       }
 
+      console.log('[Gemini] 生成配置:', generationConfig);
+
       const model = client.getGenerativeModel({ 
         model: config.model,
         systemInstruction: systemInstruction || undefined,
         generationConfig
       });
 
+      console.log('[Gemini] 开始调用API...');
       let result;
       if (history.length > 1) {
+        console.log('[Gemini] 使用聊天模式，历史消息:', history.length - 1);
         const chat = model.startChat({
           history: history.slice(0, -1)
         });
         result = await chat.sendMessageStream(lastUserMessage.content);
       } else {
+        console.log('[Gemini] 使用单次生成模式');
         result = await model.generateContentStream(lastUserMessage.content);
       }
 
+      console.log('[Gemini] API调用成功，开始处理流式响应...');
+      let chunkCount = 0;
+      let totalContent = '';
+      
       for await (const chunk of result.stream) {
-        const chunkText = chunk.text();
-        if (chunkText) {
-          yield {
-            content: chunkText,
-            done: false,
-            model: config.model,
-            provider: 'gemini'
-          };
+        try {
+          const chunkText = chunk.text();
+          chunkCount++;
+          
+          if (chunkText) {
+            totalContent += chunkText;
+            console.log(`[Gemini] 收到第${chunkCount}个chunk，长度:${chunkText.length}`);
+            
+            yield {
+              content: chunkText,
+              done: false,
+              model: config.model,
+              provider: 'gemini'
+            };
+          } else {
+            console.log(`[Gemini] 第${chunkCount}个chunk为空`);
+          }
+        } catch (chunkError: any) {
+          console.error('[Gemini] 处理chunk时出错:', chunkError);
+          // 继续处理下一个chunk
         }
       }
+      
+      console.log(`[Gemini] 流式响应完成，总共${chunkCount}个chunk，总长度:${totalContent.length}`);
       
       yield {
         content: '',
@@ -181,6 +222,14 @@ export class GeminiAdapter implements AIServiceAdapter {
         provider: 'gemini'
       };
     } catch (error: any) {
+      console.error('[Gemini] 流式聊天出错:', {
+        message: error.message,
+        status: error.status,
+        code: error.code,
+        details: error.details,
+        stack: error.stack
+      });
+      
       throw new AIServiceError(
         error.message || 'Gemini流式API调用失败',
         'gemini',

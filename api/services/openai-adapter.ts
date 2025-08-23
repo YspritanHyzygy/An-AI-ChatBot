@@ -25,12 +25,6 @@ export class OpenAIAdapter implements AIServiceAdapter {
     try {
       const client = this.createClient(config);
       
-      // 如果启用了 Responses API，使用新的 API
-      if (config.useResponsesAPI) {
-        console.log('[OpenAI] 使用 Responses API 进行对话');
-        return await this.chatWithResponsesAPI(messages, config, client);
-      }
-      
       console.log('[OpenAI] 使用传统 Chat Completions API 进行对话');
       // 使用传统的 Chat Completions API
       const requestParams: any = {
@@ -207,99 +201,7 @@ export class OpenAIAdapter implements AIServiceAdapter {
     }
   }
 
-  /**
-   * 使用 Responses API 进行聊天
-   */
-  private async chatWithResponsesAPI(messages: ChatMessage[], config: AIServiceConfig, client: OpenAI): Promise<AIResponse> {
-    try {
-      console.log('[DEBUG] OpenAI Responses API - Creating response with config:', {
-        model: config.model,
-        useResponsesAPI: config.useResponsesAPI,
-        previousResponseId: config.previousResponseId,
-        store: config.store
-      });
 
-      // 构建 Responses API 请求参数
-      const requestParams: any = {
-        model: config.model,
-        input: messages.map(msg => ({
-          role: msg.role,
-          content: msg.content
-        })),
-        store: config.store !== false // 默认存储30天
-      };
-
-      // 如果有上一个响应ID，用于链式对话
-      if (config.previousResponseId) {
-        requestParams.previous_response_id = config.previousResponseId;
-        console.log('[OpenAI Responses API] 使用链式对话，previous_response_id:', config.previousResponseId);
-      }
-
-      // 控制数据存储（默认存储30天）
-      if (config.store !== undefined) {
-        console.log('[OpenAI Responses API] 数据存储设置:', config.store);
-      }
-
-      console.log('[OpenAI Responses API] 请求参数:', JSON.stringify(requestParams, null, 2));
-
-      // 调用 Responses API
-      const response = await (client as any).responses.create(requestParams);
-      
-      console.log('[OpenAI Responses API] 响应成功，response_id:', response.id);
-      
-      console.log('[DEBUG] OpenAI Responses API - Response received:', {
-        id: response.id,
-        created_at: response.created_at,
-        output_length: response.output?.length
-      });
-
-      // 解析响应内容
-      if (!response.output || response.output.length === 0) {
-        throw new AIServiceError('No response output from Responses API', 'openai');
-      }
-
-      const firstOutput = response.output[0];
-      let content = '';
-      
-      if (firstOutput.content && firstOutput.content.length > 0) {
-        const textContent = firstOutput.content.find((c: any) => c.type === 'text');
-        if (textContent) {
-          content = textContent.text;
-        }
-      }
-
-      if (!content) {
-        throw new AIServiceError('No text content in Responses API output', 'openai');
-      }
-
-      return {
-        content,
-        model: response.model || config.model,
-        provider: 'openai',
-        responseId: response.id,
-        createdAt: response.created_at,
-        usage: response.usage ? {
-          promptTokens: response.usage.input_tokens || 0,
-          completionTokens: response.usage.output_tokens || 0,
-          totalTokens: (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0)
-        } : undefined
-      };
-    } catch (error: any) {
-      console.error('[DEBUG] OpenAI Responses API - Error:', {
-        message: error.message,
-        status: error.status,
-        code: error.code,
-        type: error.type
-      });
-      
-      throw new AIServiceError(
-        error.message || 'OpenAI Responses API调用失败',
-        'openai',
-        error.status,
-        error
-      );
-    }
-  }
 
   /**
    * 检索之前的响应

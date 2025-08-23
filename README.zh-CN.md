@@ -6,13 +6,16 @@
 
 ## ✨ 核心特性
 
-- 🔄 **多AI提供商支持**: 支持OpenAI、Google Gemini、Anthropic Claude、xAI Grok、Ollama和通义千问
-- 🔐 **用户自定义API密钥**: 通过Web界面安全配置个人API密钥
-- 💬 **对话管理**: 创建、保存和管理多个聊天对话
+- 🔄 **多AI提供商支持**: 支持OpenAI、Google Gemini、Anthropic Claude、xAI Grok、Ollama
+- 👤 **用户认证系统**: 用户注册和登录功能，支持用户数据隔离和个性化设置
+- 🔐 **用户自定义API密钥**: 通过Web界面或环境变量配置个人API密钥
+- 💬 **对话管理**: 创建、保存和管理多个聊天对话，支持用户独立数据
 - ⚡ **实时聊天界面**: 现代化响应式聊天UI，支持消息历史
 - 📝 **Markdown渲染**: AI回复支持完整的Markdown格式显示
-- 💾 **持久化存储**: 所有对话和消息存储在Supabase数据库中
-- 🛠️ **灵活配置**: 支持用户配置和环境变量两种配置方式
+- 💾 **本地数据存储**: 所有对话和消息存储在本地JSON文件中
+- 📤 **数据导出/导入**: 支持用户数据备份和迁移功能
+- 🚀 **零配置启动**: 无需注册外部服务，直接运行即可使用
+- 💼 **商业化扩展**: 预留订阅和付费功能接口，支持未来扩展
 - 🔒 **TypeScript**: 前后端完整的类型安全保障
 
 ## 技术栈
@@ -26,14 +29,13 @@
 
 ### 后端
 - **Node.js** with Express.js and TypeScript
-- **Supabase** for database and authentication
-- **AI Service Adapters** for multiple AI providers
+- **本地JSON数据库** 用于数据存储
+- **AI服务适配器** 支持多个AI提供商
 
 ## 📋 环境要求
 
 - **Node.js 18+** 和 npm
-- **Supabase账户和项目** ([免费注册](https://supabase.com))
-- **AI提供商API密钥** (可通过Web界面配置，无需提前准备)
+- **AI提供商API密钥** (可通过Web界面或环境变量配置)
 
 ## 🚀 快速开始
 
@@ -41,60 +43,40 @@
 
 ```bash
 # 克隆项目
-git clone <repository-url>
-cd gemini-video-webui
+git clone https://github.com/YspritanHyzygy/ONMI-CHATBOX.git
+cd ONMI-CHATBOX
 
 # 安装依赖
 npm install
 ```
 
-### 步骤2: 配置Supabase数据库
+### 步骤2: 配置AI服务 (可选)
 
-#### 2.1 创建Supabase项目
-1. 访问 [Supabase官网](https://supabase.com) 并注册账户
-2. 创建新项目，记录项目URL和API密钥
-3. 等待项目初始化完成（约2-3分钟）
+**方式一: 环境变量配置 (推荐)**
 
-#### 2.2 设置数据库
-1. 在Supabase控制台中，进入 **SQL Editor**
-2. 依次执行 `supabase/migrations/` 目录下的SQL文件：
-   - `001_initial_schema.sql`
-   - `002_custom_models.sql` 
-   - `003_fix_user_id_type.sql`
-   - `004_fix_all_user_id_types.sql`
-   - `005_fix_conversations_and_messages.sql`
-
-#### 2.3 配置环境变量
-```bash
-# 复制环境变量模板
-cp .env.example .env
-```
-
-编辑 `.env` 文件，填入Supabase配置：
+编辑 `.env` 文件，添加您的AI API密钥：
 ```env
-# Supabase配置 (必填)
-SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
+# AI提供商API密钥 (可选 - 也可通过Web界面配置)
+OPENAI_API_KEY=sk-your-openai-key
+GEMINI_API_KEY=your-gemini-key
+CLAUDE_API_KEY=your-claude-key
+XAI_API_KEY=your-grok-key
 
-# AI提供商API密钥 (可选 - 推荐通过Web界面配置)
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...
-CLAUDE_API_KEY=...
-XAI_API_KEY=...
-QWEN_API_KEY=...
+# Ollama配置 (如果使用本地Ollama)
 OLLAMA_BASE_URL=http://localhost:11434/v1
 ```
 
-> 💡 **提示**: AI提供商的API密钥可以稍后通过Web界面配置，无需在此步骤填写。
+**方式二: Web界面配置**
+可以在启动应用后通过设置页面配置。
 
 ### 步骤3: 启动应用
 
-#### 方式一: 同时启动前后端 (推荐)
-```bash
+```
+# 同时启动前后端 (推荐)
 npm run dev
 ```
 
-#### 方式二: 分别启动
+**或者分别启动:**
 ```bash
 # 终端1: 启动后端服务 (端口3001)
 npm run server:dev
@@ -103,16 +85,23 @@ npm run server:dev
 npm run client:dev
 ```
 
-### 步骤4: 配置AI提供商
+### 步骤4: 开始使用
 
 1. 🌐 访问 `http://localhost:5173`
-2. ⚙️ 点击右上角设置按钮进入设置页面
-3. 🔑 配置你需要的AI提供商API密钥
-4. ✅ 点击"测试连接"验证配置
-5. 🎯 选择默认模型
-6. 💬 返回聊天页面开始对话！
+2. 👤 **注册/登录**: 创建新账户或使用现有用户名登录
+3. 💬 直接开始聊天，或先配置AI服务
+4. ⚙️ 点击设置按钮配置API密钥(可选)
+5. ✅ 点击"测试连接"验证配置
+6. 🎯 选择默认模型
+7. 🎉 开始聊天！
 
-### 步骤5: 生产环境部署
+### 步骤5: 数据管理 (可选)
+
+- 📤 **导出数据**: 备份您的对话和设置
+- 📥 **导入数据**: 从备份文件恢复
+- 🔄 **切换用户**: 每个用户都有独立的数据
+
+### 步骤6: 生产环境部署
 
 ```bash
 # 构建前端
@@ -124,11 +113,9 @@ npm start
 
 ## 🔧 配置验证
 
-### 检查Supabase连接
+### 检查服务状态
 启动应用后，检查终端输出是否包含：
 ```
-SUPABASE_URL: Set
-SUPABASE_ANON_KEY: Set
 Server ready on port 3001
 ```
 
@@ -140,9 +127,6 @@ Server ready on port 3001
 ```
 
 ## ❓ 常见问题
-
-### Q: Supabase连接失败
-**A**: 检查 `.env` 文件中的URL和密钥是否正确，确保没有多余的空格或引号。
 
 ### Q: AI提供商测试连接失败
 **A**: 
@@ -162,8 +146,8 @@ netstat -ano | findstr :5173
 # 后端: api/server.ts 中修改 PORT
 ```
 
-### Q: 数据库迁移失败
-**A**: 确保按顺序执行所有SQL文件，如果出错可以删除表后重新执行。
+### Q: 没有聊天记录显示？
+**A**: 这是正常现象，本地存储会在首次使用时自动创建演示数据。
 
 ## 项目结构
 
@@ -177,11 +161,18 @@ netstat -ano | findstr :5173
 │   ├── pages/           # 页面组件
 │   ├── hooks/           # 自定义 React hooks
 │   └── lib/            # 工具函数
-├── supabase/             # 数据库迁移和架构
+├── data/                 # 本地数据存储文件夹
+│   └── database.json    # 聊天数据存储 (自动创建)
 └── public/              # 静态资源
 ```
 
 ## API 端点
+
+### 用户认证端点
+- `POST /api/auth/register` - 用户注册
+- `POST /api/auth/login` - 用户登录
+- `GET /api/auth/user/:userId` - 获取用户信息
+- `GET /api/auth/check-username/:username` - 检查用户名是否可用
 
 ### 聊天端点
 - `GET /api/chat/conversations` - 获取用户对话
@@ -192,6 +183,16 @@ netstat -ano | findstr :5173
 - `GET /api/providers` - 获取可用的AI提供商及其配置
 - `GET /api/providers/supported` - 获取支持的AI提供商列表
 
+### 数据管理端点
+- `GET /api/data/export/:userId` - 导出用户数据
+- `POST /api/data/import/:userId` - 导入用户数据
+- `GET /api/data/preview/:userId` - 获取导出数据预览
+
+### 商业化端点 (预留)
+- `GET /api/business/subscription/:userId` - 获取订阅信息
+- `GET /api/business/usage/:userId` - 获取API使用统计
+- `GET /api/business/plans` - 获取可用订阅计划
+
 ## 🤖 支持的AI提供商
 
 | 提供商 | 最新模型 | 配置要求 | 获取方式 |
@@ -200,7 +201,7 @@ netstat -ano | findstr :5173
 | **Google Gemini** | Gemini-2.5-Pro, Gemini-2.5-Flash, Gemini-2.0-Flash | API Key | [获取API密钥](https://aistudio.google.com/app/apikey) |
 | **Anthropic Claude** | Claude-3.5-Sonnet, Claude-3-Opus, Claude-3.5-Haiku | API Key | [获取API密钥](https://console.anthropic.com/) |
 | **xAI Grok** | Grok-4, Grok-3, Grok-2-1212, Grok-2-Vision | API Key | [获取API密钥](https://console.x.ai/) |
-| **阿里云通义千问** | Qwen-Max, Qwen-Plus, Qwen-Turbo, Qwen2.5-Coder | API Key | [获取API密钥](https://dashscope.console.aliyun.com/) |
+
 | **Ollama** | Llama3.3, Llama3.2, Qwen2.5, Mistral-Nemo, Phi4 | 本地安装 | [下载Ollama](https://ollama.ai/) |
 
 ### 💰 费用说明
@@ -208,7 +209,7 @@ netstat -ano | findstr :5173
 - **Google Gemini**: 有免费额度，超出后按使用量付费
 - **Anthropic Claude**: 按使用量付费，Claude-3.5-Sonnet约$0.003/1K tokens
 - **xAI Grok**: 按使用量付费
-- **通义千问**: 有免费额度，超出后按使用量付费
+
 - **Ollama**: 完全免费，本地运行
 
 ### 🚀 推荐配置
